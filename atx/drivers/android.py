@@ -34,6 +34,7 @@ from atx.drivers import Bounds
 from atx import logutils
 from atx.drivers.mixin import DeviceMixin, hook_wrap
 from atx import adbkit
+import atx.drivers.screen_mapping as mapping 
 
 
 _DISPLAY_RE = re.compile(
@@ -231,11 +232,11 @@ class AndroidDevice(DeviceMixin, UiaDevice):
         try:
             self.adb_shell(command)
             self.adb_cmd(['pull', phone_tmp_file, local_tmp_file])
-            image = imutils.open_as_pillow(local_tmp_file)
-            # Fix rotation not rotate right.
-            (width, height) = image.size
-            if self.screen_rotation in [1, 3] and width < height:
-                image = image.rotate(90, Image.BILINEAR, expand=True)
+            raw_image = imutils.open(local_tmp_file)
+            if mapping.enable():
+                area  = mapping.visible_area()
+                raw_image = imutils.crop(image=raw_image, left=area[0], top=area[1], right=area[2], bottom=area[3])
+            image = imutils.to_pillow(raw_image)
             return image
         except IOError:
             raise IOError("Screenshot use minicap failed.")

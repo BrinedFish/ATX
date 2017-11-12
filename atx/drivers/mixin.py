@@ -27,6 +27,7 @@ from atx import imutils
 from atx import logutils
 from atx.base import nameddict
 from atx.drivers import Pattern, Bounds, FindPoint
+import atx.drivers.screen_mapping as mapping 
 
 
 warnings.simplefilter('default')
@@ -307,6 +308,7 @@ class DeviceMixin(object):
             raise TypeError("Invalid image match method: %s" %(match_method,))
 
         (x, y) = ret['result']
+        x, y = mapping.computer(x, y)
         position = (x+dx, y+dy) # fix by offset
         if self.bounds:
             x, y = position

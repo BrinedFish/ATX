@@ -25,6 +25,7 @@ from Queue import Queue
 import atx
 from atx import logutils, ioskit
 from PIL import Image, ImageTk
+import atx.drivers.screen_mapping as mapping 
 
 log = logutils.getLogger('tkgui')
 log.setLevel(logging.DEBUG)
@@ -303,6 +304,7 @@ class CropIDE(object):
             # click action
             if self._bounds is None:
                 cx, cy = (x/self._ratio, y/self._ratio)
+                cx, cy = mapping.computer(cx,cy)
                 if self._uiauto_detect_var.get() and self._hovered_node:
                     self._selected_node = self._hovered_node
                     log.debug("select node: %s", repr(self._selected_node))
@@ -314,6 +316,7 @@ class CropIDE(object):
                 (x0, y0, x1, y1) = self.select_bounds
                 ww, hh = x1-x0, y1-y0
                 cx, cy = (x/self._ratio, y/self._ratio)
+                cx, cy = mapping.computer(cx,cy)
                 mx, my = (x0+x1)/2, (y0+y1)/2 # middle
                 self._offset = (offx, offy) = map(int, (cx-mx, cy-my))
                 poffx = ww and round(offx*100.0/ww) # in case of ww == 0
