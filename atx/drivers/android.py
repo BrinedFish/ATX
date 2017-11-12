@@ -224,11 +224,10 @@ class AndroidDevice(DeviceMixin, UiaDevice):
         prefix= 'atx-tmp-{}-'.format(uuid.uuid1())
         return tempfile.mktemp(prefix=prefix, suffix='.jpg')
 
-    def _screenshot_minicap(self):
+    def _screenshot_screencap(self):
         phone_tmp_file = '/data/local/tmp/_atx_screen-{}.jpg'.format(self._randid)
         local_tmp_file = self._mktemp()
-        command = 'LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/minicap -P {} -s > {}'.format(
-            self._minicap_params(), phone_tmp_file)
+        command = 'screencap -p {}'.format(phone_tmp_file)
         try:
             self.adb_shell(command)
             self.adb_cmd(['pull', phone_tmp_file, local_tmp_file])
@@ -244,17 +243,6 @@ class AndroidDevice(DeviceMixin, UiaDevice):
             self.adb_shell(['rm', phone_tmp_file])
             base.remove_force(local_tmp_file)
 
-    def _screenshot_uiauto(self):
-        tmp_file = self._mktemp()
-        UiaDevice.screenshot(self, tmp_file)
-        # self._uiauto.screenshot(tmp_file) # this will call Mixin.screenshot first, which may get too many loop
-        try:
-            return imutils.open_as_pillow(tmp_file)
-        except IOError:
-            raise IOError("Screenshot use uiautomator failed.")
-        finally:
-            base.remove_force(tmp_file)
-
     @hook_wrap(consts.EVENT_CLICK)
     def click(self, x, y):
         """
@@ -269,21 +257,7 @@ class AndroidDevice(DeviceMixin, UiaDevice):
         return self._uiauto.click(x, y)
 
     def _take_screenshot(self):
-        screen = None
-        if self.screenshot_method == consts.SCREENSHOT_METHOD_UIAUTOMATOR:
-            screen = self._screenshot_uiauto()
-        elif self.screenshot_method == consts.SCREENSHOT_METHOD_MINICAP:
-            screen = self._screenshot_minicap()
-        elif self.screenshot_method == consts.SCREENSHOT_METHOD_AUTO:
-            try:
-                screen = self._screenshot_minicap()
-                self.screenshot_method = consts.SCREENSHOT_METHOD_MINICAP
-            except IOError:
-                screen = self._screenshot_uiauto()
-                self.screenshot_method = consts.SCREENSHOT_METHOD_UIAUTOMATOR
-        else:
-            raise TypeError('Invalid screenshot_method')
-        return screen
+        return self._screenshot_screencap()
 
     def raw_cmd(self, *args, **kwargs):
         '''
