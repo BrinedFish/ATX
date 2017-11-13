@@ -91,7 +91,7 @@ class AndroidDevice(DeviceMixin):
 
         self._randid = base.id_generator(5)
         self.screenshot_method = consts.SCREENSHOT_METHOD_AUTO
-        self.press = object
+        self.screen_rotation = None
 
     @property
     def serial(self):
@@ -157,6 +157,26 @@ class AndroidDevice(DeviceMixin):
         """ Deprecated: use current_package_name instaed.
         Check if app in running in foreground """
         return self.info['currentPackageName'] == package_name
+
+    @property
+    def rotation(self):
+        """
+        Rotaion of the phone
+
+        0: normal
+        1: home key on the right
+        2: home key on the top
+        3: home key on the left
+        """
+        if self.screen_rotation in range(4):
+            return self.screen_rotation
+        return 0
+
+    @rotation.setter
+    def rotation(self, r):
+        if not isinstance(r, int):
+            raise TypeError("r must be int")
+        self.screen_rotation = r
 
     @property
     def display(self):
