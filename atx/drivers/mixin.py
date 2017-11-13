@@ -18,7 +18,6 @@ import warnings
 import six
 import cv2
 import aircv as ac
-from uiautomator import AutomatorDeviceObject
 
 from atx import base
 from atx import consts
@@ -187,9 +186,6 @@ class DeviceMixin(object):
             ow, oh = sorted(resolution)
             dw, dh = sorted(self.display)
             fw, fh = 1.0*dw/ow, 1.0*dh/oh
-            # For horizontal screen, scale by Y (width)
-            # For vertical screen, scale by X (height)
-            scale = fw if self.rotation in (1, 3) else fh
         return scale
 
     @property

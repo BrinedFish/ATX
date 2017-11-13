@@ -19,9 +19,6 @@ import warnings
 import logging
 import uuid
 import xml.dom.minidom
-
-from uiautomator import Device as UiaDevice
-from uiautomator import AutomatorDeviceObject
 from PIL import Image
 
 from atx import consts
@@ -67,7 +64,7 @@ def getenvs(*names):
             return os.getenv(name)
 
 
-class AndroidDevice(DeviceMixin, UiaDevice):
+class AndroidDevice(DeviceMixin):
     def __init__(self, serialno=None, **kwargs):
         """Initial AndroidDevice
         Args:
@@ -90,14 +87,11 @@ class AndroidDevice(DeviceMixin, UiaDevice):
 
         kwargs['adb_server_host'] = kwargs.pop('host', self._host)
         kwargs['adb_server_port'] = kwargs.pop('port', self._port)
-        UiaDevice.__init__(self, serialno, **kwargs)
         DeviceMixin.__init__(self)
 
         self._randid = base.id_generator(5)
-        self._uiauto = super(AndroidDevice, self) # also will call DeviceMixin method, not very good
-
-        self.screen_rotation = None
         self.screenshot_method = consts.SCREENSHOT_METHOD_AUTO
+        self.press = object
 
     @property
     def serial(self):
@@ -133,6 +127,12 @@ class AndroidDevice(DeviceMixin, UiaDevice):
         port = self._adb_device.forward(device_port, local_port)
         return (self._host, port)
 
+    def press_back(self):
+        self.keyevent('KEYCODE_BACK')
+
+    def press_home(self):
+        self.keyevent('KEYCODE_HOME')
+
     def current_app(self):
         """Get current app (package, activity)
         Returns:
@@ -158,13 +158,6 @@ class AndroidDevice(DeviceMixin, UiaDevice):
         Check if app in running in foreground """
         return self.info['currentPackageName'] == package_name
 
-    def sleep(self, secs=None):
-        """Depreciated. use delay instead."""
-        if secs is None:
-            self._uiauto.sleep()
-        else:
-            self.delay(secs)
-
     @property
     def display(self):
         """Virtual keyborad may get small d.info['displayHeight']
@@ -187,39 +180,6 @@ class AndroidDevice(DeviceMixin, UiaDevice):
         w, h = min(w, h), max(w, h)
         self.__display = collections.namedtuple('Display', ['width', 'height'])(w, h)
         return self.__display
-    
-    @property
-    def rotation(self):
-        """
-        Rotaion of the phone
-
-        0: normal
-        1: home key on the right
-        2: home key on the top
-        3: home key on the left
-        """
-        if self.screen_rotation in range(4):
-            return self.screen_rotation
-        return self.adb_device.rotation() or self.info['displayRotation']
-
-    @rotation.setter
-    def rotation(self, r):
-        if not isinstance(r, int):
-            raise TypeError("r must be int")
-        self.screen_rotation = r
-    
-    def _minicap_params(self):
-        """
-        Used about 0.1s
-        uiautomator d.info is now well working with device which has virtual menu.
-        """
-        rotation = self.rotation 
-
-        # rotation not working on SumSUNG 9502
-        return '{x}x{y}@{x}x{y}/{r}'.format(
-            x=self.display.width,
-            y=self.display.height,
-            r=rotation*90)
     
     def _mktemp(self, suffix='.jpg'):
         prefix= 'atx-tmp-{}-'.format(uuid.uuid1())
@@ -255,7 +215,7 @@ class AndroidDevice(DeviceMixin, UiaDevice):
         Returns:
             None
         """
-        return self._uiauto.click(x, y)
+        return self.adb_shell(['input','tap',str(x),str(y)])
 
     def _take_screenshot(self):
         return self._screenshot_screencap()
@@ -300,7 +260,6 @@ class AndroidDevice(DeviceMixin, UiaDevice):
     def properties(self):
         '''
         Android Properties, extracted from `adb shell getprop`
-
         Returns:
             dict of props, for
             example:
@@ -357,98 +316,8 @@ class AndroidDevice(DeviceMixin, UiaDevice):
         warnings.warn("deprecated, use snapshot instead", DeprecationWarning)
         return self.screenshot(filename)
 
-    def _parse_xml_node(self, node):
-        # ['bounds', 'checkable', 'class', 'text', 'resource_id', 'package']
-        __alias = {
-            'class': 'class_name',
-            'resource-id': 'resource_id',
-            'content-desc': 'content_desc',
-            'long-clickable': 'long_clickable',
-        }
-
-        def parse_bounds(text):
-            m = re.match(r'\[(\d+),(\d+)\]\[(\d+),(\d+)\]', text)
-            if m is None:
-                return None
-            return Bounds(*map(int, m.groups()))
-
-        def str2bool(v):
-            return v.lower() in ("yes", "true", "t", "1")
-
-        def convstr(v):
-            return v.encode('utf-8')
-
-        parsers = {
-            'bounds': parse_bounds,
-            'text': convstr,
-            'class_name': convstr,
-            'resource_id': convstr,
-            'package': convstr,
-            'checkable': str2bool,
-            'scrollable': str2bool,
-            'focused': str2bool,
-            'clickable': str2bool,
-            'enabled': str2bool,
-            'selected': str2bool,
-            'long_clickable': str2bool,
-            'focusable': str2bool,
-            'password': str2bool,
-            'index': int,
-            'content_desc': convstr,
-        }
-        ks = {}
-        for key, value in node.attributes.items():
-            key = __alias.get(key, key)
-            f = parsers.get(key)
-            if value is None:
-                ks[key] = None
-            elif f:
-                ks[key] = f(value)
-        for key in parsers.keys():
-            ks[key] = ks.get(key)
-        ks['xml'] = node
-
-        return UINode(**ks)
-
-    def dump_nodes(self):
-        """Dump current screen UI to list
-        Returns:
-            List of UINode object, For
-            example:
-
-            [UINode(
-                bounds=Bounds(left=0, top=0, right=480, bottom=168),
-                checkable=False,
-                class_name='android.view.View',
-                text='',
-                resource_id='',
-                package='com.sonyericsson.advancedwidget.clock')]
-        """
-        xmldata = self._uiauto.dump()
-        dom = xml.dom.minidom.parseString(xmldata.encode('utf-8'))
-        root = dom.documentElement
-        nodes = root.getElementsByTagName('node')
-        ui_nodes = []
-        for node in nodes:
-            ui_nodes.append(self._parse_xml_node(node))
-        return ui_nodes
-
-    def dump_view(self):
-        """Current Page XML
-        """
-        warnings.warn("deprecated, source() instead", DeprecationWarning)
-        return self._uiauto.dump()
-
-    def source(self):
-        """
-        Dump page xml
-        """
-        return self._uiauto.dump()
-
-    def _escape_text(self, s, utf7=False):
-        s = s.replace(' ', '%s')
-        if utf7:
-            s = s.encode('utf-7')
+    def _escape_text(self, s):
+        s = s.replace(' ', '\ ')
         return s
 
     def keyevent(self, keycode):
@@ -462,35 +331,18 @@ class AndroidDevice(DeviceMixin, UiaDevice):
         """
         self.adb_shell(['input', 'keyevent', keycode])
 
-    def enable_ime(self, ime):
-        """
-        Enable input methods
-
-        Args:
-            - ime(string): for example "android.unicode.ime/.Utf7ImeService"
-        """
-        self.adb_shell(['ime', 'enable', ime])
-        self.adb_shell(['ime', 'set', ime])
-
-    def _is_utf7ime(self, ime=None):
-        if ime is None:
-            ime = self.current_ime()
-        return ime in [
-            'android.unicode.ime/.Utf7ImeService',
-            'com.netease.atx.assistant/.ime.Utf7ImeService',
-            'com.netease.nie.yosemite/.ime.ImeService']
-
-    def _prepare_ime(self):
-        if self._is_utf7ime():
-            return True
-
-        for ime in self.input_methods():
-            if self._is_utf7ime(ime):
-                self.enable_ime(ime)
-                return True
-        return False
-        # raise RuntimeError("Input method for programers not detected.\n" +
-        #     "\tInstall with: python -m atx install atx-assistant")
+    def _chinese_type(self,text):
+        first = True
+        for s in text.split('%s'):
+            if first:
+                first = False
+            else:
+                self.adb_shell(['input', 'chinese', '%'])
+                s = 's' + s
+            if s == '':
+                continue
+            estext = self._escape_text(s)
+            self.adb_shell(['input', 'chinese', estext])
 
     def _shell_type(self, text):
         first = True
@@ -516,32 +368,21 @@ class AndroidDevice(DeviceMixin, UiaDevice):
 
         The android source code show that
         space need to change to %s
-        insteresting thing is that if want to input %s, it is really unconvinent.
-        android source code can be found here.
-        https://android.googlesource.com/platform/frameworks/base/+/android-4.4.2_r1/cmds/input/src/com/android/commands/input/Input.java#159
-        app source see here: https://github.com/openatx/android-unicode
         """
         utext = strutils.decode(text)
-        if self._prepare_ime():
-            estext = base64.b64encode(utext.encode('utf-7'))
-            self.adb_shell(['am', 'broadcast', '-a', 'ADB_INPUT_TEXT', '--es', 'format', 'base64', '--es', 'msg', estext])
-        else:
-            self._shell_type(utext)
+        self._shell_type(utext)
 
         if enter:
             self.keyevent('KEYCODE_ENTER')
-        if next:
-            # FIXME(ssx): maybe KEYCODE_NAVIGATE_NEXT
-            self.adb_shell(['am', 'broadcast', '-a', 'ADB_EDITOR_CODE', '--ei', 'code', '5'])
 
-    def clear_text(self, count=100):
+    def clear_text(self, count=10):
         """Clear text
         Args:
             - count (int): send KEY_DEL count
         """
-        self._prepare_ime()
-        self.keyevent('KEYCODE_MOVE_END')
-        self.adb_shell(['am', 'broadcast', '-a', 'ADB_INPUT_CODE', '--ei', 'code', '67', '--ei', 'repeat', str(count)])
+        while (count > 0):
+            self.keyevent('KEYCODE_DEL')
+            count = count - 1
 
     def input_methods(self):
         """

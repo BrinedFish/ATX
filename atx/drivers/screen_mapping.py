@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 def enable():
-    return True
+    return False
 
 def physical_size():
     '''width,height'''
