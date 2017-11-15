@@ -13,7 +13,6 @@ class HtmlReport(object):
 
     def __enter__(self):
         self.rp = Report(self.d, save_dir="examples/out")
-        self.rp.patch_uiautomator()
         return self.rp
 
     def __exit__(self, type, value, trace):
@@ -32,4 +31,4 @@ def go():
         d.click(172, 274)
         d.type("ps")
         d.click(658, 258)
-        rp.assert_image_exists('examples/ps_out.720x1280.png', timeout=10.0, safe=True)
+        # rp.assert_image_exists('examples/ps_out.720x1280.png', timeout=10.0, safe=True)

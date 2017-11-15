@@ -9,7 +9,6 @@ from atx.ext.report import Report # report lib
 
 d = atx.connect()
 rp = Report(d, save_dir='report')
-rp.patch_uiautomator() # for android UI test record (optional)
 
 rp.info("Test started") # or rp.info("Test started", screenshot=d.screenshot())
 d.click(200, 200)
@@ -22,9 +21,6 @@ rp.error("Oh no.", screenshot=d.screenshot())
 # 	set to None means only take screenshot when assert fails.
 #	this is also same to other assert functions
 rp.assert_equal(1, 2, desc="Hi", screenshot=True, safe=True)
-
-# assert android ui exists
-rp.assert_ui_exists(d(text='Hello'), desc='Hello UI')
 
 # close and generate report
 rp.close()

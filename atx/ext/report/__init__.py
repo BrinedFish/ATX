@@ -98,13 +98,6 @@ class Report(object):
         kwargs['action'] = action
         self.steps.append(kwargs)
 
-    def patch_uiautomator(self):
-        """
-        Record steps of uiautomator
-        """
-        import uiautomator
-        uiautomator.add_listener('atx-report', self._uia_listener)
-
     def patch_wda(self):
         """
         Record steps of WebDriverAgent
@@ -124,6 +117,7 @@ class Report(object):
             return orig_click(that)
 
         pt.patch_item(wda.Selector, 'click', _click)
+
 
     def start_record(self):
         self.start_time = time.time()
