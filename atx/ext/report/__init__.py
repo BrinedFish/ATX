@@ -20,6 +20,7 @@ from atx import imutils
 from atx.base import nameddict
 from atx.ext.report import patch as pt
 from PIL import Image
+import atx.drivers.screen_mapping as mapping 
 
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
@@ -356,6 +357,7 @@ class Report(object):
             d.screenshot(os.path.join(self.save_dir, screen_after))
 
             (x, y) = evt.args
+            x, y = mapping.computer(x, y)
             self.add_step('click',
                 screen_before=screen_before,
                 screen_after=screen_after,
@@ -381,6 +383,7 @@ class Report(object):
             if evt.traceback is None:
                 (x, y) = evt.retval.pos
                 # FIXME(ssx): quick hot fix
+                x, y = mapping.computer(x, y)
                 cv_img = imutils.from_pillow(self.last_screenshot)
                 cv_img = imutils.mark_point(cv_img, x, y)
                 self.__last_screenshot = imutils.to_pillow(cv_img)
