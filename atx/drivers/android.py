@@ -31,8 +31,7 @@ from atx.drivers import Bounds
 from atx import logutils
 from atx.drivers.mixin import DeviceMixin, hook_wrap
 from atx import adbkit
-import atx.drivers.screen_mapping as mapping 
-
+import atx.drivers.screen_mapping as mapping
 
 _DISPLAY_RE = re.compile(
     r'.*DisplayViewport{valid=true, .*orientation=(?P<orientation>\d+), .*deviceWidth=(?P<width>\d+), deviceHeight=(?P<height>\d+).*')
@@ -47,7 +46,7 @@ _DEFAULT_IME = 'com.netease.atx.assistant/.ime.Utf7ImeService'
 
 UINode = collections.namedtuple('UINode', [
     'xml',
-    'bounds', 
+    'bounds',
     'selected', 'checkable', 'clickable', 'scrollable', 'focusable', 'enabled', 'focused', 'long_clickable',
     'password',
     'class_name',
@@ -83,7 +82,7 @@ class AndroidDevice(DeviceMixin):
 
         self._adb_client = adbkit.Client(self._host, self._port)
         self._adb_device = self._adb_client.device(serialno)
-        self._adb_shell_timeout = 30.0 # max adb shell exec time
+        self._adb_shell_timeout = 30.0  # max adb shell exec time
 
         kwargs['adb_server_host'] = kwargs.pop('host', self._host)
         kwargs['adb_server_port'] = kwargs.pop('port', self._port)
@@ -109,7 +108,7 @@ class AndroidDevice(DeviceMixin):
     @property
     def adb_device(self):
         return self._adb_device
-    
+
     @property
     def wlan_ip(self):
         """ Wlan IP """
@@ -148,6 +147,13 @@ class AndroidDevice(DeviceMixin):
             return AppInfo(ai['package'], ai['activity'], ai.get('pid'))
         except RuntimeError:
             return AppInfo(self.info['currentPackageName'], None, None)
+
+    def current_activity(self):
+        ai = self.current_app()
+        return ai.package + '/' + ai.activity
+
+    def assert_activity(self, activity):
+        return self.current_activity() == activity
 
     @property
     def current_package_name(self):
@@ -200,9 +206,9 @@ class AndroidDevice(DeviceMixin):
         w, h = min(w, h), max(w, h)
         self.__display = collections.namedtuple('Display', ['width', 'height'])(w, h)
         return self.__display
-    
+
     def _mktemp(self, suffix='.jpg'):
-        prefix= 'atx-tmp-{}-'.format(uuid.uuid1())
+        prefix = 'atx-tmp-{}-'.format(uuid.uuid1())
         return tempfile.mktemp(prefix=prefix, suffix='.jpg')
 
     def _screenshot_screencap(self):
@@ -214,7 +220,7 @@ class AndroidDevice(DeviceMixin):
             self.adb_cmd(['pull', phone_tmp_file, local_tmp_file])
             raw_image = imutils.open(local_tmp_file)
             if mapping.enable():
-                area  = mapping.visible_area()
+                area = mapping.visible_area()
                 raw_image = imutils.crop(image=raw_image, left=area[0], top=area[1], right=area[2], bottom=area[3])
             image = imutils.to_pillow(raw_image)
             return image
@@ -235,7 +241,7 @@ class AndroidDevice(DeviceMixin):
         Returns:
             None
         """
-        return self.adb_shell(['input','tap',str(x),str(y)])
+        return self.adb_shell(['input', 'tap', str(x), str(y)])
 
     def _take_screenshot(self):
         return self._screenshot_screencap()
@@ -310,7 +316,7 @@ class AndroidDevice(DeviceMixin):
             output = self.adb_shell(['am', 'start', '-W', '-n', '%s/%s' % (package_name, activity)])
             m = _pattern.search(output)
             if m:
-                return int(m.group(1))/1000.0
+                return int(m.group(1)) / 1000.0
 
     def stop_app(self, package_name, clear=False):
         '''
@@ -351,7 +357,7 @@ class AndroidDevice(DeviceMixin):
         """
         self.adb_shell(['input', 'keyevent', keycode])
 
-    def _chinese_type(self,text):
+    def _chinese_type(self, text):
         first = True
         for s in text.split('%s'):
             if first:
@@ -424,5 +430,5 @@ class AndroidDevice(DeviceMixin):
         if m:
             return m.group(1)
 
-        # Maybe no need to raise error
-        # raise RuntimeError("Canot detect current input method")
+            # Maybe no need to raise error
+            # raise RuntimeError("Canot detect current input method")

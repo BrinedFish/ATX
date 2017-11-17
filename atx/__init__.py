@@ -40,9 +40,10 @@ def _detect_platform(connect_url):
 
 
 def connect(*args, **kwargs):
+    # type: (*args, **kwargs) -> object
     """Connect to a device, and return its object
     Args:
-        platform: string one of <android|ios|windows>
+        platform: string one of <android>
         
     Returns:
         None
@@ -55,15 +56,8 @@ def connect(*args, **kwargs):
 
     cls = None
     if platform == 'android':
-        os.environ['JSONRPC_TIMEOUT'] = "60" # default is 90s which is too long.
         devcls = __import__('atx.drivers.android')
         cls = devcls.drivers.android.AndroidDevice
-    elif platform == 'windows':
-        devcls = __import__('atx.drivers.windows')
-        cls = devcls.drivers.windows.WindowsDevice
-    elif platform == 'ios':
-        devcls = __import__('atx.drivers.ios_webdriveragent')
-        cls = devcls.drivers.ios_webdriveragent.IOSDevice
     elif platform == 'webdriver':
         devcls = __import__('atx.drivers.webdriver')
         cls = devcls.drivers.webdriver.WebDriver

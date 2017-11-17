@@ -395,10 +395,6 @@ class DeviceMixin(object):
             screen.save(filename)
         return screen
 
-    def touch_image(self, *args, **kwargs):
-        """ALias for click_image"""
-        self.click_image(*args, **kwargs)
-
     def add_listener(self, fn, event_flags):
         """Listen event
         Args:
