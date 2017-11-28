@@ -117,12 +117,12 @@ class CropIDE(object):
         refresh_pad.grid(column=0, row=0, sticky=tk.W)
         self._btn_refresh = tk.Button(refresh_pad,
                                       textvariable=self._refresh_text,
-                                      width=(frm_controls_width-16)/2,
+                                      width=(frm_controls_width - 16) / 2,
                                       command=self._refresh_screen)
         self._btn_refresh.grid(column=0, row=0, sticky=tk.W)
         tk.Button(refresh_pad,
                   text='Reset',
-                  width=(frm_controls_width-16)/2,
+                  width=(frm_controls_width - 16) / 2,
                   command=self._reset).grid(column=1, row=0, sticky=tk.W)
 
         frm_checkbtns = tk.Frame(refresh_pad)
@@ -132,31 +132,36 @@ class CropIDE(object):
                        variable=self._auto_refresh_var,
                        width=14,
                        command=self._run_check_refresh).grid(column=0, row=0, sticky=tk.W)
-        tk.Entry(frm_control, textvariable=self._gen_code_text1, width=frm_controls_width).grid(column=0, row=1, sticky=tk.EW)
+        tk.Entry(frm_control, textvariable=self._gen_code_text1, width=frm_controls_width).grid(column=0, row=1,
+                                                                                                sticky=tk.EW)
 
         # save image for click
         tk.Label(frm_control, text='-Save image-').grid(column=0, row=5, sticky=tk.EW)
         image_pad = tk.Frame(frm_control)
         image_pad.grid(column=0, row=6, sticky=tk.EW)
         tk.Button(image_pad, text="SAVE", command=self._save_crop).grid(column=0, row=0, sticky=tk.EW)
-        tk.Entry(image_pad, textvariable=self._genfile_name, width=frm_controls_width + 3).grid(column=0, row=3, sticky=tk.W)
+        tk.Entry(image_pad, textvariable=self._genfile_name, width=frm_controls_width + 3).grid(column=0, row=3,
+                                                                                                sticky=tk.W)
 
         # generate code
         tk.Label(frm_control, text='-Generated code-').grid(column=0, row=10, sticky=tk.EW)
         code_pad = tk.Frame(frm_control)
         code_pad.grid(column=0, row=11, sticky=(tk.W, tk.E))
-        tk.Entry(code_pad, textvariable=self._gencode_text, width=frm_controls_width).grid(column=0, row=1, sticky=tk.EW)
+        tk.Entry(code_pad, textvariable=self._gencode_text, width=frm_controls_width).grid(column=0, row=1,
+                                                                                           sticky=tk.EW)
 
         run_pad = tk.Frame(code_pad)
         run_pad.grid(column=0, row=12, sticky=tk.EW)
         tk.Button(run_pad, text='RUN', command=self._run_code, width=6).grid(column=0, row=0, sticky=tk.W)
-        tk.Entry(run_pad, textvariable=self._commit_text, width=frm_controls_width - 6).grid(column=1, row=0, sticky=tk.W)
+        tk.Entry(run_pad, textvariable=self._commit_text, width=frm_controls_width - 6).grid(column=1, row=0,
+                                                                                             sticky=tk.W)
 
         # run type
         tk.Label(frm_control, text='-Text type-').grid(column=0, row=15, sticky=tk.EW)
         type_pad = tk.Frame(frm_control)
         type_pad.grid(column=0, row=16, sticky=(tk.W, tk.E))
-        tk.Entry(type_pad, textvariable=self._type_text, width=frm_controls_width + 3).grid(column=0, row=4, sticky=tk.W)
+        tk.Entry(type_pad, textvariable=self._type_text, width=frm_controls_width + 3).grid(column=0, row=4,
+                                                                                            sticky=tk.W)
         tk.Button(type_pad, text='TYPE', command=self._run_type).grid(column=0, row=5, sticky=tk.EW)
 
         tk.Label(frm_control, text='-Function-').grid(column=0, row=20, sticky=tk.EW)

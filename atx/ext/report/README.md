@@ -38,5 +38,3 @@ report/
 ```
 
 open `index.html` with browser.
-
-![report](report.png)

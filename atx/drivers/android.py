@@ -1,434 +1,403 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-#
-# License under MIT
 
 
 from __future__ import absolute_import
 
-import collections
-import contextlib
-import base64
-import os
 import re
-import sys
-import subprocess
-import time
+import os
+import collections
+import functools
+import inspect
+import traceback
 import tempfile
-import warnings
-import logging
-import uuid
-import xml.dom.minidom
-from PIL import Image
-
-from atx import consts
-from atx import errors
-from atx import patch
-from atx import base
+import time
 from atx import imutils
-from atx import strutils
-from atx.drivers import Bounds
-from atx import logutils
-from atx.drivers.mixin import DeviceMixin, hook_wrap
-from atx import adbkit
+from atx.drivers import Pattern
+from atx import consts
+from atx.base import nameddict
+import atx.utils.texts as texts
+import atx.utils.adb as adb
+import atx.utils.images as images
 import atx.drivers.screen_mapping as mapping
+from atx.utils.images import ImageNotFoundError
 
-_DISPLAY_RE = re.compile(
-    r'.*DisplayViewport{valid=true, .*orientation=(?P<orientation>\d+), .*deviceWidth=(?P<width>\d+), deviceHeight=(?P<height>\d+).*')
-
-_PROP_PATTERN = re.compile(
-    r'\[(?P<key>.*?)\]:\s*\[(?P<value>.*)\]')
-
-_INPUT_METHOD_RE = re.compile(
-    r'mCurMethodId=([-_./\w]+)')
-
-_DEFAULT_IME = 'com.netease.atx.assistant/.ime.Utf7ImeService'
-
-UINode = collections.namedtuple('UINode', [
-    'xml',
-    'bounds',
-    'selected', 'checkable', 'clickable', 'scrollable', 'focusable', 'enabled', 'focused', 'long_clickable',
-    'password',
-    'class_name',
-    'index', 'resource_id',
-    'text', 'content_desc',
-    'package'])
-
-log = logutils.getLogger(__name__)
+Traceback = collections.namedtuple('Traceback', ['stack', 'exception'])
+HookEvent = nameddict('HookEvent', ['args', 'kwargs', 'tag', 'flag', 'result', 'traceback', 'done'])
+ACTION_TIME = 0.3
 
 
-def getenvs(*names):
-    for name in names:
-        if os.getenv(name):
-            return os.getenv(name)
+def hook_wrap(event_type):
+    def wrap(fn):
+        @functools.wraps(fn)
+        def _inner(*args, **kwargs):
+            func_args = inspect.getcallargs(fn, *args, **kwargs)
+            self = func_args.get('self')
+            _tag = texts.unique(5)
+            _traceback = None
+            _result = None
+
+            def trigger(event):
+                for (f, event_flag) in self._listeners:
+                    if event_flag & event_type:
+                        event.args = args[1:]
+                        event.kwargs = kwargs
+                        event.flag = event_type
+                        event.tag = _tag
+                        event.result = _result
+                        event.traceback = _traceback
+                        f(event)
+
+            try:
+                trigger(HookEvent(done=False))
+                _result = fn(*args, **kwargs)
+                return _result
+            except Exception as e:
+                _traceback = Traceback(traceback.format_exc(), e)
+                raise
+            finally:
+                trigger(HookEvent(done=True))
+
+        return _inner
+
+    return wrap
 
 
-class AndroidDevice(DeviceMixin):
-    def __init__(self, serialno=None, **kwargs):
-        """Initial AndroidDevice
-        Args:
-            serialno: string specify which device
+class Device(object):
+    def __init__(self, serial=None, port=None):
+        self.serial = serial
+        self.port = port
 
-        Returns:
-            AndroidDevice object
+    def cpu_usage(self):
+        return adb.cpu_usage(serial=self.serial, port=self.port)
 
-        Raises:
-            EnvironmentError
-        """
-        self.__display = None
-        serialno = serialno or getenvs('ATX_ADB_SERIALNO', 'ANDROID_SERIAL')
-        self._host = kwargs.get('host') or getenvs('ATX_ADB_HOST', 'ANDROID_ADB_SERVER_HOST') or '127.0.0.1'
-        self._port = int(kwargs.get('port') or getenvs('ATX_ADB_PORT', 'ANDROID_ADB_SERVER_PORT') or 5037)
+    def mem_usage(self):
+        return adb.mem_usage(serial=self.serial, port=self.port)
 
-        self._adb_client = adbkit.Client(self._host, self._port)
-        self._adb_device = self._adb_client.device(serialno)
-        self._adb_shell_timeout = 30.0  # max adb shell exec time
+    def temperature(self):
+        return adb.temperature(serial=self.serial, port=self.port)
 
-        kwargs['adb_server_host'] = kwargs.pop('host', self._host)
-        kwargs['adb_server_port'] = kwargs.pop('port', self._port)
-        DeviceMixin.__init__(self)
+    def running_instance(self):
+        pass
 
-        self._randid = base.id_generator(5)
-        self.screenshot_method = consts.SCREENSHOT_METHOD_AUTO
-        self.screen_rotation = None
+    def install(self, url):
+        pass
 
-    @property
-    def serial(self):
-        """ Android Device Serial Number """
-        return self._adb_device.serial
+    def uninstall(self, package):
+        pass
 
-    @property
-    def adb_server_host(self):
-        return self._host
+    def dist_clean(self):
+        pass
 
-    @property
-    def adb_server_port(self):
-        return self._port
+    def power_off(self):
+        adb.power_off(serial=self.serial, port=self.port)
 
-    @property
-    def adb_device(self):
-        return self._adb_device
+    def power_on(self):
+        pass
 
-    @property
-    def wlan_ip(self):
-        """ Wlan IP """
-        return self.adb_shell(['getprop', 'dhcp.wlan0.ipaddress']).strip()
+    def reboot(self):
+        adb.reboot(serial=self.serial, port=self.port)
 
-    def forward(self, device_port, local_port=None):
-        """Forward device port to local
-        Args:
-            device_port: port inside device
-            local_port: port on PC, if this value is None, a port will random pick one.
 
-        Returns:
-            tuple, (host, local_port)
-        """
-        port = self._adb_device.forward(device_port, local_port)
-        return (self._host, port)
+class Application(object):
+    def __init__(self, serial=None, port=None):
+        self._listeners = []
+        self.identity = None
+        self.serial = serial
+        self.port = port
+        self.instance = None
+        self.display_id = None
+        self.package = None
+        self.activity = None
+        self.resource_path = None
+        self.cache_image = None
+        # adapt to old api
+        self.display = (1920, 1080)
+        self.local_only = True
 
+    def info(self):
+        pass
+
+    def prepare(self):
+        if len(adb.which(serial=self.serial, port=self.port, which_cmd="cv").strip()) == 0:
+            self.local_only = False
+
+    def attach(self, package=None, activity=None, resource_path=None, instance=None, display_id=None, identity=None):
+        self.package = package
+        self.activity = activity
+        self.instance = instance
+        self.display_id = display_id
+        self.resource_path = resource_path  # r"tasks/res/%s/%s@auto.png"
+        self.identity = identity
+
+    def connect(self):
+        adb.connect(serial=self.serial, port=self.port)
+
+    def add_listener(self, fn, event_flags):
+        self._listeners.append((fn, event_flags))
+
+    def remove_listener(self, fn, event_flags):
+        self._listeners.remove((fn, event_flags))
+
+    def _trigger_event(self, event_flag, event):
+        for (fn, flag) in self._listeners:
+            if flag & event_flag:
+                fn(event)
+
+    def lunch(self):
+        if self.package is None or self.activity is None:
+            raise ValueError("app info should be attach before call lunch")
+        adb.am_start(serial=self.serial,
+                     port=self.port,
+                     package_name=self.package,
+                     activity_name=self.activity,
+                     instance=self.instance)
+        # TODO ensure lunch success
+
+    def stop(self):
+        if self.package is None:
+            raise ValueError("app info should be attach before call stop")
+        adb.am_force_stop(serial=self.serial,
+                          port=self.port,
+                          package_name=self.package,
+                          instance=self.instance)
+
+    @hook_wrap(consts.EVENT_SWIPE)
+    def swipe(self, x1, y1, x2, y2):
+        adb.swipe(serial=self.serial,
+                  port=self.port,
+                  instance=self.instance,
+                  x1=x1,
+                  y1=y1,
+                  x2=x2,
+                  y2=y2)
+        time.sleep(ACTION_TIME)
+
+    def tap(self, x, y):
+        adb.tap(serial=self.serial,
+                port=self.port,
+                instance=self.instance,
+                x=x,
+                y=y)
+        time.sleep(ACTION_TIME)
+
+    @hook_wrap(consts.EVENT_TYPE)
+    def type(self, msg):
+        adb.type(serial=self.serial,
+                 port=self.port,
+                 instance=self.instance,
+                 message=msg)
+
+    def clear_type(self, count=20):
+        while count > 0:
+            adb.del_input(serial=self.serial, port=self.port, instance=self.instance)
+            count = count - 1
+
+    def screen_image(self):
+        phone_tmp_file = self.__remote_tmp_path()
+        local_tmp_file = self.__local_tmp_path()
+        try:
+            adb.screen_cap(serial=self.serial,
+                           port=self.port,
+                           remote_path=phone_tmp_file,
+                           display_id=self.display_id)
+            adb.pull(serial=self.serial,
+                     port=self.port,
+                     remote_path=phone_tmp_file,
+                     local_path=local_tmp_file)
+
+            return images.read(local_tmp_file, mapping.visible_area())
+        except IOError:
+            raise IOError("Screenshot failed.")
+        finally:
+            adb.rm(serial=self.serial, port=self.port, remote_path=phone_tmp_file)
+            self.__remove_local_file(local_tmp_file)
+
+    @hook_wrap(consts.EVENT_CLICK_IMAGE)
+    def tap_image(self, key=None, local_object_path=None, timeout=15, frequency=0.2):
+        if self.local_only:
+            return self.__tap_image_remote(local_object_path=self.__get_path(key, local_object_path),
+                                           timeout=timeout,
+                                           frequency=frequency)
+        else:
+            return self.__tap_image_local(local_object_path=self.__get_path(key, local_object_path),
+                                          timeout=timeout,
+                                          frequency=frequency)
+
+    @hook_wrap(consts.EVENT_ASSERT_EXISTS)
+    def exists(self, key=None, local_object_path=None):
+        local_object_path = self.__get_path(key, local_object_path)
+        if self.local_only:
+            self.__exist_remote(local_object_path)
+        else:
+            self.__exist_local(local_object_path)
+
+    def wait_image(self, key=None, local_object_path=None, timeout=15, frequency=0.2):
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if self.exists(key=key, local_object_path=local_object_path):
+                return
+            else:
+                time.sleep(frequency)
+
+    def wait_image_gone(self, key=None, local_object_path=None, timeout=15, frequency=0.2):
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if not self.exists(key=key, local_object_path=local_object_path):
+                return
+            else:
+                time.sleep(frequency)
+
+    def back(self):
+        adb.back(serial=self.serial, port=self.port, instance=self.instance)
+        time.sleep(ACTION_TIME)
+
+    def home(self):
+        adb.home(serial=self.serial, port=self.port, instance=self.instance)
+        time.sleep(ACTION_TIME)
+
+    def on_report(self):
+        pass
+
+    def __exist_local(self, local_object_path=None):
+        try:
+            images.match(target=local_object_path,
+                         scanner=self.screen_image())
+            return True
+        except ImageNotFoundError:
+            return False
+
+    def __tap_image_local(self, local_object_path=None, timeout=15.0, frequency=0.2):
+        target = images.read(local_object_path)
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                x, y = images.match(target, self.screen_image())
+                x, y = mapping.computer(x, y)
+                self.tap(x, y)
+                return x, y
+            except ImageNotFoundError:
+                time.sleep(frequency)
+                pass
+        del target
+        raise ImageNotFoundError('Not found image %s' % local_object_path)
+
+    def __exist_remote(self, local_object_path=None):
+        remote_target = self.__remote_tmp_path(True)
+        adb.push(serial=self.serial, port=self.port, local_path=local_object_path, remote_path=remote_target)
+        screen = self.__remote_tmp_path()
+        try:
+            adb.screen_cap(serial=self.serial,
+                           port=self.port,
+                           remote_path=screen,
+                           display_id=self.display_id)
+            cv = adb.match(serial=self.serial,
+                           port=self.port,
+                           remote_object_path=remote_target,
+                           remote_scanner_path=screen)
+            mapping.computer_match(cv)
+            return True
+        except (IOError, ImageNotFoundError):
+            pass
+        finally:
+            adb.rm(serial=self.serial, port=self.port, remote_path=screen)
+            adb.rm(serial=self.serial, port=self.port, remote_path=remote_target)
+        return False
+
+    def __tap_image_remote(self, local_object_path=None, timeout=15, frequency=0.2):
+        remote_target = self.__remote_tmp_path(True)
+        adb.push(serial=self.serial, port=self.port, local_path=local_object_path, remote_path=remote_target)
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            try:
+                screen = self.__remote_tmp_path()
+                adb.screen_cap(serial=self.serial,
+                               port=self.port,
+                               remote_path=screen,
+                               display_id=self.display_id)
+                cv = adb.match(serial=self.serial,
+                               port=self.port,
+                               remote_object_path=remote_target,
+                               remote_scanner_path=screen)
+                x, y = mapping.computer_match(cv)
+                self.tap(x, y)
+                return x, y
+            except (IOError, ImageNotFoundError):
+                time.sleep(frequency)
+            finally:
+                adb.rm(serial=self.serial, port=self.port, remote_path=screen)
+        adb.rm(serial=self.serial, port=self.port, remote_path=remote_target)
+        raise ImageNotFoundError('Not found image %s' % local_object_path)
+
+    def __get_path(self, key=None, local_object_path=None):
+        if key is None and local_object_path is None:
+            raise ValueError("Illegal Argument")
+        if key is not None and self.resource_path is not None:
+            return self.resource_path % (self.package, key)
+        return local_object_path
+
+    @staticmethod
+    def __remote_tmp_path(complexity=False):
+        return '/data/local/tmp/atx_screen_%s.png' % texts.unique(None if complexity else 5)
+
+    @staticmethod
+    def __local_tmp_path(complexity=True):
+        return tempfile.mktemp(prefix='atx_tmp_%s' % texts.unique(None if complexity else 5), suffix='.png')
+
+    @staticmethod
+    def __remove_local_file(name):
+        if not os.path.isfile(name):
+            return
+        try:
+            os.unlink(name)
+        except Exception as e:
+            print("Warning: local file {} not deleted, Error {}".format(name, e))
+
+    # adapt to old api
     def press_back(self):
-        self.keyevent('KEYCODE_BACK')
+        self.back()
 
     def press_home(self):
-        self.keyevent('KEYCODE_HOME')
+        self.home()
 
-    def current_app(self):
-        """Get current app (package, activity)
-        Returns:
-            namedtuple ['package', 'activity', 'pid']
-            activity, pid maybe None
+    def click_image(self, pattern):
+        self.tap_image(local_object_path=pattern)
 
-        Raises:
-            RuntimeError
-        """
-        AppInfo = collections.namedtuple('AppInfo', ['package', 'activity', 'pid'])
-        try:
-            ai = self._adb_device.current_app()
-            return AppInfo(ai['package'], ai['activity'], ai.get('pid'))
-        except RuntimeError:
-            return AppInfo(self.info['currentPackageName'], None, None)
+    def wait(self, pattern, timeout=15):
+        self.wait_image(local_object_path=pattern, timeout=timeout)
+
+    def screenshot(self, filename=None):
+        screen = self.screen_image()
+        if filename:
+            save_dir = os.path.dirname(filename) or '.'
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            screen.save(filename)
+        return screen
+
+    @hook_wrap(consts.EVENT_CLICK)
+    def click(self, x, y):
+        self.tap(x, y)
+
+    @staticmethod
+    def pattern_open(path):
+        return Pattern('unknown', image=imutils.open(path))
 
     def current_activity(self):
         ai = self.current_app()
-        return ai.package + '/' + ai.activity
+        return ai['package'] + '/' + ai['activity']
 
     def assert_activity(self, activity):
         return self.current_activity() == activity
 
-    @property
-    def current_package_name(self):
-        return self.info['currentPackageName']
-
-    def is_app_alive(self, package_name):
-        """ Deprecated: use current_package_name instaed.
-        Check if app in running in foreground """
-        return self.info['currentPackageName'] == package_name
-
-    @property
-    def rotation(self):
-        """
-        Rotaion of the phone
-
-        0: normal
-        1: home key on the right
-        2: home key on the top
-        3: home key on the left
-        """
-        if self.screen_rotation in range(4):
-            return self.screen_rotation
-        return 0
-
-    @rotation.setter
-    def rotation(self, r):
-        if not isinstance(r, int):
-            raise TypeError("r must be int")
-        self.screen_rotation = r
-
-    @property
-    def display(self):
-        """Virtual keyborad may get small d.info['displayHeight']
-        """
-        if self.__display:
-            return self.__display
-        w, h = (0, 0)
-        for line in self.adb_shell('dumpsys display').splitlines():
-            m = _DISPLAY_RE.search(line, 0)
-            if not m:
-                continue
-            w = int(m.group('width'))
-            h = int(m.group('height'))
-            # o = int(m.group('orientation'))
-            w, h = min(w, h), max(w, h)
-            self.__display = collections.namedtuple('Display', ['width', 'height'])(w, h)
-            return self.__display
-
-        w, h = self.info['displayWidth'], self.info['displayHeight']
-        w, h = min(w, h), max(w, h)
-        self.__display = collections.namedtuple('Display', ['width', 'height'])(w, h)
-        return self.__display
-
-    def _mktemp(self, suffix='.jpg'):
-        prefix = 'atx-tmp-{}-'.format(uuid.uuid1())
-        return tempfile.mktemp(prefix=prefix, suffix='.jpg')
-
-    def _screenshot_screencap(self):
-        phone_tmp_file = '/data/local/tmp/_atx_screen-{}.jpg'.format(self._randid)
-        local_tmp_file = self._mktemp()
-        command = 'screencap -p {}'.format(phone_tmp_file)
-        try:
-            self.adb_shell(command)
-            self.adb_cmd(['pull', phone_tmp_file, local_tmp_file])
-            raw_image = imutils.open(local_tmp_file)
-            if mapping.enable():
-                area = mapping.visible_area()
-                raw_image = imutils.crop(image=raw_image, left=area[0], top=area[1], right=area[2], bottom=area[3])
-            image = imutils.to_pillow(raw_image)
-            return image
-        except IOError:
-            raise IOError("Screenshot use minicap failed.")
-        finally:
-            self.adb_shell(['rm', phone_tmp_file])
-            base.remove_force(local_tmp_file)
-
-    @hook_wrap(consts.EVENT_CLICK)
-    def click(self, x, y):
-        """
-        Touch specify position
-
-        Args:
-            x, y: int
-
-        Returns:
-            None
-        """
-        return self.adb_shell(['input', 'tap', str(x), str(y)])
-
-    def _take_screenshot(self):
-        return self._screenshot_screencap()
-
-    def raw_cmd(self, *args, **kwargs):
-        '''
-        Return subprocess.Process instance
-        '''
-        return self.adb_device.raw_cmd(*args, **kwargs)
-
-    def adb_cmd(self, command, **kwargs):
-        '''
-        Run adb command, for example: adb(['pull', '/data/local/tmp/a.png'])
-
-        Args:
-            command: string or list of string
-
-        Returns:
-            command output
-        '''
-        kwargs['timeout'] = kwargs.get('timeout', self._adb_shell_timeout)
-        if isinstance(command, list) or isinstance(command, tuple):
-            return self.adb_device.run_cmd(*list(command), **kwargs)
-        return self.adb_device.run_cmd(command, **kwargs)
-
-    def adb_shell(self, command, **kwargs):
-        '''
-        Run adb shell command
-
-        Args:
-            command: string or list of string
-
-        Returns:
-            command output
-        '''
-        if isinstance(command, list) or isinstance(command, tuple):
-            return self.adb_cmd(['shell'] + list(command), **kwargs)
-        else:
-            return self.adb_cmd(['shell'] + [command], **kwargs)
-
-    @property
-    def properties(self):
-        '''
-        Android Properties, extracted from `adb shell getprop`
-        Returns:
-            dict of props, for
-            example:
-
-                {'ro.bluetooth.dun': 'true'}
-        '''
-        props = {}
-        for line in self.adb_shell(['getprop']).splitlines():
-            m = _PROP_PATTERN.match(line)
-            if m:
-                props[m.group('key')] = m.group('value')
-        return props
-
-    def start_app(self, package_name, activity=None):
-        '''
-        Start application
-
-        Args:
-            - package_name (string): like com.example.app1
-            - activity (string): optional, activity name
-
-        Returns time used (unit second), if activity is not None
-        '''
-        _pattern = re.compile(r'TotalTime: (\d+)')
-        if activity is None:
-            self.adb_shell(['monkey', '-p', package_name, '-c', 'android.intent.category.LAUNCHER', '1'])
-        else:
-            output = self.adb_shell(['am', 'start', '-W', '-n', '%s/%s' % (package_name, activity)])
-            m = _pattern.search(output)
-            if m:
-                return int(m.group(1)) / 1000.0
-
-    def stop_app(self, package_name, clear=False):
-        '''
-        Stop application
-
-        Args:
-            package_name: string like com.example.app1
-            clear: bool, remove user data
-
-        Returns:
-            None
-        '''
-        if clear:
-            self.adb_shell(['pm', 'clear', package_name])
-        else:
-            self.adb_shell(['am', 'force-stop', package_name])
-        return self
-
-    def takeSnapshot(self, filename):
-        '''
-        Deprecated, use screenshot instead.
-        '''
-        warnings.warn("deprecated, use snapshot instead", DeprecationWarning)
-        return self.screenshot(filename)
-
-    def _escape_text(self, s):
-        s = s.replace(' ', '\ ')
-        return s
-
-    def keyevent(self, keycode):
-        """call adb shell input keyevent ${keycode}
-
-        Args:
-            - keycode(string): for example, KEYCODE_ENTER
-
-        keycode need reference:
-        http://developer.android.com/reference/android/view/KeyEvent.html
-        """
-        self.adb_shell(['input', 'keyevent', keycode])
-
-    def _chinese_type(self, text):
-        first = True
-        for s in text.split('%s'):
-            if first:
-                first = False
-            else:
-                self.adb_shell(['input', 'chinese', '%'])
-                s = 's' + s
-            if s == '':
-                continue
-            estext = self._escape_text(s)
-            self.adb_shell(['input', 'chinese', estext])
-
-    def _shell_type(self, text):
-        first = True
-        for s in text.split('%s'):
-            if first:
-                first = False
-            else:
-                self.adb_shell(['input', 'text', '%'])
-                s = 's' + s
-            if s == '':
-                continue
-            estext = self._escape_text(s)
-            self.adb_shell(['input', 'text', estext])
-
-    def type(self, text, enter=False, next=False):
-        """Input some text, this method has been tested not very stable on some device.
-        "Hi world" maybe spell into "H iworld"
-
-        Args:
-            - text: string (text to input), better to be unicode
-            - enter(bool): input enter at last
-            - next(bool): perform editor action Next
-
-        The android source code show that
-        space need to change to %s
-        """
-        utext = strutils.decode(text)
-        self._shell_type(utext)
-
-        if enter:
-            self.keyevent('KEYCODE_ENTER')
-
-    def clear_text(self, count=10):
-        """Clear text
-        Args:
-            - count (int): send KEY_DEL count
-        """
-        while (count > 0):
-            self.keyevent('KEYCODE_DEL')
-            count = count - 1
-
-    def input_methods(self):
-        """
-        Get all input methods
-
-        Return example: ['com.sohu.inputmethod.sogou/.SogouIME', 'android.unicode.ime/.Utf7ImeService']
-        """
-        imes = []
-        for line in self.adb_shell(['ime', 'list', '-s', '-a']).splitlines():
-            line = line.strip()
-            if re.match('^.+/.+$', line):
-                imes.append(line)
-        return imes
-
-    def current_ime(self):
-        ''' Get current input method '''
-        dumpout = self.adb_shell(['dumpsys', 'input_method'])
-        m = _INPUT_METHOD_RE.search(dumpout)
+    def current_app(self):
+        _activityRE = re.compile(r'ACTIVITY (?P<package>[^/]+)/(?P<activity>[^/\s]+) \w+ pid=(?P<pid>\d+)')
+        m = _activityRE.search(adb.shell(serial=self.serial, port=self.port, sh=['dumpsys', 'activity', 'top']))
         if m:
-            return m.group(1)
+            return dict(package=m.group('package'), activity=m.group('activity'), pid=int(m.group('pid')))
 
-            # Maybe no need to raise error
-            # raise RuntimeError("Canot detect current input method")
+        _focusedRE = re.compile('mFocusedApp=.*ActivityRecord{\w+ \w+ (?P<package>.*)/(?P<activity>.*) .*')
+        m = _focusedRE.search(adb.shell(serial=self.serial, port=self.port, sh=['dumpsys', 'window', 'windows']))
+        if m:
+            return dict(package=m.group('package'), activity=m.group('activity'))
+        raise RuntimeError("Couldn't get focused app")

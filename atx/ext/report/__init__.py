@@ -3,420 +3,244 @@
 
 from __future__ import absolute_import
 
-import atexit
-import argparse
+import atx
 import os
 import time
 import json
-import warnings
 import inspect
 import codecs
-
-import imageio
-
+import functools
 from atx import consts
-from atx import errors
 from atx import imutils
 from atx.base import nameddict
 from atx.ext.report import patch as pt
-from PIL import Image
-import atx.drivers.screen_mapping as mapping 
+import shutil
+import numpy
+from PIL.Image import Image
+import atx.drivers.screen_mapping as mapping
+from atx.drivers.android import Application
 
+EVENT_SCREENSHOT = 1 << 1
+EVENT_CLICK = 1 << 2
+EVENT_SWIPE = 1 << 3
+EVENT_TYPE = 1 << 4
+EVENT_CLICK_IMAGE = 1 << 5
+EVENT_ASSERT_EXISTS = 1 << 6
+EVENT_ALL = EVENT_SCREENSHOT | EVENT_CLICK | EVENT_CLICK_IMAGE | EVENT_ASSERT_EXISTS | EVENT_SWIPE | EVENT_TYPE
+
+LEVEL_DEFAULT = 1 << 0
+LEVEL_HTML = 1 << 1
+LEVEL_STACK = 1 << 2
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 
 
-class ExtDeprecationWarning(DeprecationWarning):
-    pass
+def report(level, out="out/"):
+    def wrap(fn):
+        @functools.wraps(fn)
+        def _inner(*args, **kwargs):
+            func_args = inspect.getcallargs(fn, *args, **kwargs)
+            app = func_args['d']
+            if not isinstance(app, Application):
+                raise ValueError("report_log need a param d(android.Application) ")
+            report_path = out + app.package
+            if app.identity is not None and len(app.identity) > 0:
+                report_path = report_path + '/' + app.identity + '/'
+            rp = Reporter(app=app, path=report_path, level=level)
+            app.add_listener(fn=rp.trigger, event_flags=EVENT_ALL)
+            try:
+                _result_val = fn(*args, **kwargs)
+                return _result_val
+            except Exception as e:
+                raise e
+            finally:
+                app.remove_listener(fn=rp.trigger, event_flags=EVENT_ALL)
+                rp.save()
+                del rp
 
-warnings.simplefilter('always', ExtDeprecationWarning)
+        return _inner
+
+    return wrap
+
+
+class ReportData(object):
+    def __init__(self):
+        self.saved = False
+        self.steps = []
+        self.result = None
+
+    def header(self, width=0, height=0, serial=''):
+        self.result = dict(
+            device=dict(
+                display=dict(width=width, height=height),
+                serial=serial,
+                start_time=time.strftime("%Y-%m-%d %H:%M:%S"),
+                start_timestamp=time.time()
+            ),
+            steps=self.steps)
+
+    def step(self, step_dict):
+        step_dict['action'] = step_dict.pop('action', "unknow")
+        step_dict['success'] = step_dict.pop('success', True)
+        step_dict['description'] = step_dict.get('description') or step_dict.get('desc')
+        step_dict['time'] = round(step_dict.pop('time', time.time() - step_dict.pop('start', 0)), 1)
+        self.steps.append(step_dict)
+
+
+class Reporter(object):
+    def __init__(self, app, path='out/', level=LEVEL_DEFAULT):
+        self.app = app
+        self.path = path
+        self.level = level
+        self.saved = False
+        self.cache = dict()
+        self.data = ReportData()
+        self.data.header(serial=app.serial)
+        self.image_path = os.path.join(path, "images")
+        if not os.path.exists(self.image_path):
+            os.makedirs(self.image_path)
+        if self.app is None or not isinstance(self.app, Application):
+            raise ValueError("fail to create a Reporter,app should be type of android.Application")
+
+    def trigger(self, hook):
+        if not hook.done:
+            self.__trigger_before(hook=hook)
+        else:
+            self.__trigger_after(hook=hook)
+
+    def save(self):
+        if atx.DEBUG and len(self.cache) > 0:
+            raise ValueError("Missing cache:%,when save report", self.cache)
+        if not self.saved:
+            self.saved = True
+            save_dir = self.path
+            data = json.dumps(self.data.result)
+            template_path = os.path.join(__dir__, 'index.tmpl.html')
+            save_path = os.path.join(save_dir, 'index.html')
+            json_path = os.path.join(save_dir, 'result.json')
+
+            with codecs.open(template_path, 'rb', 'utf-8') as f:
+                html_content = f.read().replace('$$data$$', data)
+
+            with open(json_path, 'wb') as f:
+                f.write(json.dumps(self.data.result, indent=4).encode('utf-8'))
+
+            with open(save_path, 'wb') as f:
+                f.write(html_content.encode('utf-8'))
+
+    def __del__(self):
+        self.save()
+
+    def __point_saver(self, name='', screen=None, x=0, y=0):
+        screen = imutils.from_pillow(screen)
+        screen = imutils.mark_point(screen, x, y)
+        return self.__image_saver(name=name, image=screen)
+
+    def __image_saver(self, name='', image=None):
+        path = "%s/%s%s.png" % (self.image_path, name, time.time())
+        if image is None:
+            self.app.screen_image().save(path)
+        elif isinstance(image, str) or isinstance(image, unicode):
+            shutil.copyfile(image, path)
+        elif isinstance(image, Image):
+            image.save(path)
+        elif isinstance(image, numpy.ndarray):
+            imutils.to_pillow(image).save(path)
+        return path.replace(self.path + '/', '')
+
+    def __enable_html(self):
+        return self.level & LEVEL_HTML != 0
+
+    def __enable_stack(self):
+        return self.level & LEVEL_STACK != 0
+
+    def __trigger_before(self, hook):
+        before = dict()
+        before['start'] = time.time()
+        if self.__enable_html():
+            before['bf_screen'] = self.app.screen_image()
+        if self.__enable_stack():
+            before['bf_activity'] = self.app.current_activity()
+        self.cache[hook.tag] = before
+
+    def __trigger_after(self, hook):
+        after = self.cache.pop(hook.tag) if hook.tag in self.cache else dict()
+        after['success'] = hook.traceback is None
+        after['traceback'] = None if hook.traceback is None else hook.traceback.stack
+        after['action'] = self.__action_from_flag(hook.flag)
+        if self.__enable_html():
+            target = None if 'local_object_path' not in hook.kwargs else hook.kwargs["local_object_path"]
+            last = None if 'bf_screen' not in after else after.pop('bf_screen')
+            current = self.app.screen_image()
+            if hook.flag == consts.EVENT_CLICK:
+                x, y = hook.args
+                # x, y = mapping.computer(x, y)
+                after['position'] = {'x': x, 'y': y}
+                if last is not None:
+                    after['screen_before'] = self.__point_saver('bf_tap', screen=last, x=x, y=y)
+                if current is not None:
+                    after['screen_after'] = self.__image_saver("at_tap", image=current)
+            elif hook.flag == consts.EVENT_CLICK_IMAGE:
+                if target is not None:
+                    after['target'] = self.__image_saver('tg_tap_img', target)
+                if last is not None:
+                    if hook.result is not None:
+                        x, y = hook.result
+                        # x, y = mapping.computer(x, y)
+                        after['position'] = {'x': x, 'y': y}
+                        after['screen_before'] = self.__point_saver('bf_tap_img', screen=last, x=x, y=y)
+                    else:
+                        after['screen_before'] = self.__image_saver('tg_tap_img', last)
+                if current is not None:
+                    after['screen_after'] = self.__image_saver("at_tap_img", image=current)
+            elif hook.flag == consts.EVENT_TYPE:
+                after['description'] = hook.args
+                if last is not None:
+                    after['screen_before'] = self.__image_saver('bf_type', image=last)
+                if current is not None:
+                    after['screen_after'] = self.__image_saver("at_type", image=current)
+            elif hook.flag == consts.EVENT_SWIPE:
+                if last is not None:
+                    after['screen_before'] = self.__image_saver('bf_swipe', image=last)
+                if current is not None:
+                    after['screen_after'] = self.__image_saver("at_swipe", image=current)
+            elif hook.flag == consts.EVENT_ASSERT_EXISTS:
+                after['success'] = hook.result
+                if current is not None:
+                    after['screenshot'] = self.__image_saver("check_exist", image=current)
+            elif hook.flag == consts.EVENT_SCREENSHOT:
+                if current is not None:
+                    after['screenshot'] = self.__image_saver("shot", image=current)
+            del last, current, target
+        if self.__enable_stack():
+            after['activity'] = self.app.current_activity()
+        self.data.step(after)
+        del after
+
+    @staticmethod
+    def __action_from_flag(flag):
+        if flag == consts.EVENT_CLICK:
+            return 'click'
+        elif flag == consts.EVENT_CLICK_IMAGE:
+            return 'click_image'
+        elif flag == consts.EVENT_TYPE:
+            return 'type'
+        elif flag == consts.EVENT_SWIPE:
+            return 'swipe'
+        elif flag == consts.EVENT_ASSERT_EXISTS:
+            return 'assert_exists'
+        elif flag == consts.EVENT_SCREENSHOT:
+            return 'screenshot'
+        else:
+            return 'unknow'
+
 
 def json2obj(data):
     data['this'] = data.pop('self', None)
     return nameddict('X', data.keys())(**data)
 
+
 def center(bounds):
-    x = (bounds['left'] + bounds['right'])/2
-    y = (bounds['top'] + bounds['bottom'])/2
-    return (x, y)
-
-
-class Report(object):
-    """
-    Example usage:
-    from atx.ext.report import Report
-
-    Report(d)
-    """
-    def __init__(self, d, save_dir='report'):
-        image_dir = os.path.join(save_dir, 'images')
-        if not os.path.exists(image_dir):
-            os.makedirs(image_dir)
-
-        self.d = d
-        self.save_dir = save_dir
-        self.steps = []
-        self.result = None
-
-        self.__gif_path = os.path.join(save_dir, 'output.gif')
-        self.__gif = imageio.get_writer(self.__gif_path, fps=2)
-        self.__uia_last_position = None
-        self.__last_screenshot = None
-        self.__closed = False
-        
-        self.start_record()
-
-    @property
-    def last_screenshot(self):
-        return self.__last_screenshot
-
-    def _uia_listener(self, evtjson):
-        evt = json2obj(evtjson)
-        if evt.name != '_click':
-            return
-        if evt.is_before:
-            self.d.screenshot()
-            self.__uia_last_position = center(evt.this.bounds)
-        else:
-            (x, y) = self.__uia_last_position
-            # self.last_screenshot
-            cv_last_img = imutils.from_pillow(self.last_screenshot)
-            cv_last_img = imutils.mark_point(cv_last_img, x, y)
-            screen = imutils.to_pillow(cv_last_img)
-            screen_before = self._save_screenshot(screen=screen, append_gif=True)
-            # FIXME: maybe need sleep for a while
-            screen_after = self._save_screenshot(append_gif=True)
-
-            self.add_step('click',
-                screen_before=screen_before,
-                screen_after=screen_after,
-                position={'x': x, 'y': y})
-
-    def add_step(self, action, **kwargs):
-        kwargs['success'] = kwargs.pop('success', True)
-        kwargs['description'] = kwargs.get('description') or kwargs.get('desc')
-        kwargs['time'] = round(kwargs.pop('time', time.time()-self.start_time), 1)
-        kwargs['action'] = action
-        self.steps.append(kwargs)
-
-    def patch_wda(self):
-        """
-        Record steps of WebDriverAgent
-        """
-        import wda
-
-        def _click(that):
-            rawx, rawy = that.bounds.center
-            x, y = self.d.scale*rawx, self.d.scale*rawy
-            screen_before = self._save_screenshot()
-            orig_click = pt.get_original(wda.Selector, 'click')
-            screen_after = self._save_screenshot()
-            self.add_step('click',
-                screen_before=screen_before,
-                screen_after=screen_after,
-                position={'x': x, 'y': y})
-            return orig_click(that)
-
-        pt.patch_item(wda.Selector, 'click', _click)
-
-
-    def start_record(self):
-        self.start_time = time.time()
-
-        w, h = self.d.display
-        if self.d.rotation in (1, 3): # for horizontal
-            w, h = h, w
-        self.result = dict(device=dict(
-            display=dict(width=w, height=h),
-            serial=getattr(self.d, 'serial', ''),
-            start_time=time.strftime("%Y-%m-%d %H:%M:%S"),
-            start_timestamp=time.time(),
-        ), steps=self.steps)
-
-        self.d.add_listener(self._listener, consts.EVENT_ALL) # ^ consts.EVENT_SCREENSHOT)
-
-        self.__closed = False
-        atexit.register(self.close)
-
-    def close(self):
-        if self.__closed:
-            return
-
-        save_dir = self.save_dir
-        data = json.dumps(self.result)
-        tmpl_path = os.path.join(__dir__, 'index.tmpl.html')
-        save_path = os.path.join(save_dir, 'index.html')
-        json_path = os.path.join(save_dir, 'result.json')
-
-        with codecs.open(tmpl_path, 'rb', 'utf-8') as f:
-            html_content = f.read().replace('$$data$$', data)
-
-        with open(json_path, 'wb') as f:
-            f.write(json.dumps(self.result, indent=4).encode('utf-8'))
-
-        with open(save_path, 'wb') as f:
-            f.write(html_content.encode('utf-8'))
-
-        self.__gif.close()
-        self.__closed = True
-
-    def info(self, text, screenshot=None):
-        """
-        Args:
-            - text(str): description
-            - screenshot: Bool or PIL.Image object
-        """
-        step = {
-            'time': '%.1f' % (time.time()-self.start_time,),
-            'action': 'info',
-            'description': text,
-            'success': True,
-        }   
-        if screenshot:
-            step['screenshot'] = self._take_screenshot(screenshot, name_prefix='info')
-        self.steps.append(step)
-
-    def error(self, text, screenshot=None):
-        """
-        Args:
-            - text(str): description
-            - screenshot: Bool or PIL.Image object
-        """
-        step = {
-            'time': '%.1f' % (time.time()-self.start_time,),
-            'action': 'error',
-            'description': text,
-            'success': False,
-        }   
-        if screenshot:
-            step['screenshot'] = self._take_screenshot(screenshot, name_prefix='error')
-        self.steps.append(step)
-
-    def _save_screenshot(self, screen=None, name=None, name_prefix='screen', append_gif=False):
-        if screen is None:
-            screen = self.d.screenshot()
-        if name is None:
-            name = 'images/%s_%d.jpg' % (name_prefix, time.time())
-        relpath = os.path.join(self.save_dir, name)
-        screen.save(relpath)
-        if append_gif:
-            self._add_to_gif(screen)
-        return name
-
-    def _add_to_gif(self, image):
-        half = 0.5
-        out = image.resize([int(half*s) for s in image.size])
-        cvimg = imutils.from_pillow(out)
-        self.__gif.append_data(cvimg[:, :, ::-1])
-
-    def _take_screenshot(self, screenshot=False, name_prefix='unknown'):
-        """
-        This is different from _save_screenshot.
-        The return value maybe None or the screenshot path
-
-        Args:
-            screenshot: bool or PIL image
-        """
-        if isinstance(screenshot, bool):
-            if not screenshot:
-                return
-            return self._save_screenshot(name_prefix=name_prefix)
-        if isinstance(screenshot, Image.Image):
-            return self._save_screenshot(screen=screenshot, name_prefix=name_prefix)
-
-        raise TypeError("invalid type for func _take_screenshot: "+ type(screenshot))
-
-    def _record_assert(self, is_success, text, screenshot=False, desc=None):
-        step = {
-            'time': '%.1f' % (time.time()-self.start_time,),
-            'action': 'assert',
-            'message': text,
-            'description': desc,
-            'success': is_success,
-            'screenshot': self._take_screenshot(screenshot, name_prefix='assert'),
-        }
-        self.steps.append(step)
-
-    def _add_assert(self, **kwargs):
-        """
-        if screenshot is None, only failed case will take screenshot
-        """
-        # convert screenshot to relative path from <None|True|False|PIL.Image>
-        screenshot = kwargs.get('screenshot')
-        is_success = kwargs.get('success')
-        screenshot = (not is_success) if screenshot is None else screenshot
-        kwargs['screenshot'] = self._take_screenshot(screenshot=screenshot, name_prefix='assert')
-        self.add_step('assert', **kwargs)
-        if not is_success:
-            message = kwargs.get('message')
-            frame, filename, line_number, function_name, lines, index = inspect.stack()[2]
-            print('Assert [%s: %d] WARN: %s' % (filename, line_number, message))
-            if not kwargs.get('safe', False):
-                raise AssertionError(message)
-
-    def assert_equal(self, v1, v2, **kwargs):#, desc=None, screenshot=False, safe=False):
-        """ Check v1 is equals v2, and take screenshot if not equals
-        Args:
-            - desc (str): some description
-            - safe (bool): will omit AssertionError if set to True
-            - screenshot: can be type <None|True|False|PIL.Image>
-        """
-        is_success = v1 == v2
-        if is_success:
-            message = "assert equal success, %s == %s" %(v1, v2)
-        else:
-            message = '%s not equal %s' % (v1, v2)
-        kwargs.update({
-            'message': message,
-            'success': is_success,
-        })
-        self._add_assert(**kwargs)
-
-    def assert_image_exists(self, pattern, timeout=20.0, **kwargs):
-        """TODO: not finished yet.
-        Assert if image exists
-        Args:
-            - pattern: image filename # not support pattern for now
-            - timeout (float): seconds
-        """
-        start_time = time.time()
-        is_success = False
-        while time.time() - start_time < timeout:
-            point = self.match(pattern, **match_kwargs)
-            if point is None:
-                continue
-            if not point.matched:
-                # log.debug('Ignore confidence: %s', point.confidence)
-                continue
-            is_success = True
-        kwargs.update({
-            'message': 'image exists',
-            'success': is_success,
-        })
-        self._add_assert(**kwargs)
-
-    def assert_ui_exists(self, ui, **kwargs):
-        """ For Android & IOS
-        Args:
-            - ui: need have property "exists"
-            - desc (str): description
-            - safe (bool): will omit AssertionError if set to True
-            - screenshot: can be type <None|True|False|PIL.Image>
-            - platform (str, default:android): android | ios
-        """
-        is_success = ui.exists
-        if is_success:
-            if kwargs.get('screenshot') is not None:
-                if self.d.platform == 'android':
-                    bounds = ui.info['bounds'] # For android only.
-                    kwargs['position'] = {
-                        'x': (bounds['left']+bounds['right'])/2,
-                        'y': (bounds['top']+bounds['bottom'])/2,
-                    }
-                elif self.d.platform == 'ios':
-                    bounds = ui.bounds # For iOS only.
-                    kwargs['position'] = {
-                        'x': self.d.scale*(bounds.x+bounds.width/2),
-                        'y': self.d.scale*(bounds.y+bounds.height/2),
-                    }
-            message = 'UI exists'
-        else:
-            message = 'UI not exists'
-        kwargs.update({
-            'message': message,
-            'success': is_success,
-        })
-        self._add_assert(**kwargs)
-
-    def _listener(self, evt):
-        d = self.d
-        screen_before = 'images/before_%d.jpg' % time.time()
-        screen_before_abspath = os.path.join(self.save_dir, screen_before)
-
-        # keep screenshot for every call
-        if not evt.is_before and evt.flag == consts.EVENT_SCREENSHOT:
-            self.__last_screenshot = evt.retval
-
-        if evt.depth > 1: # base depth is 1
-            return
-
-        if evt.is_before: # call before function
-            if evt.flag == consts.EVENT_CLICK:
-                self.__last_screenshot = d.screenshot() # Maybe no need to set value here.
-                (x, y) = evt.args
-                cv_img = imutils.from_pillow(self.last_screenshot)
-                cv_img = imutils.mark_point(cv_img, x, y)
-                self.__last_screenshot = imutils.to_pillow(cv_img)
-                self._add_to_gif(self.last_screenshot)
-            return
-
-        if evt.flag == consts.EVENT_CLICK:
-            if self.last_screenshot: # just in case
-                self.last_screenshot.save(screen_before_abspath)
-            screen_after = 'images/after_%d.jpg' % time.time()
-            d.screenshot(os.path.join(self.save_dir, screen_after))
-
-            (x, y) = evt.args
-            x, y = mapping.computer(x, y)
-            self.add_step('click',
-                screen_before=screen_before,
-                screen_after=screen_after,
-                position={'x': x, 'y': y})
-        elif evt.flag == consts.EVENT_CLICK_IMAGE:
-            kwargs = {
-                'success': evt.traceback is None,
-                'traceback': None if evt.traceback is None else evt.traceback.stack,
-                'description': evt.kwargs.get('desc'),
-            }
-            # not record if image not found
-            if evt.retval is None and evt.traceback is None:
-                return
-            
-            if self.last_screenshot:
-                self.last_screenshot.save(screen_before_abspath)
-                kwargs['screen_before'] = screen_before
-            if evt.traceback is None or not isinstance(evt.traceback.exception, IOError):
-                target = 'images/target_%d.jpg' % time.time()
-                pattern = d.pattern_open(evt.args[0])
-                self._save_screenshot(pattern, name=target)
-                kwargs['target'] = target
-            if evt.traceback is None:
-                (x, y) = evt.retval.pos
-                # FIXME(ssx): quick hot fix
-                x, y = mapping.computer(x, y)
-                cv_img = imutils.from_pillow(self.last_screenshot)
-                cv_img = imutils.mark_point(cv_img, x, y)
-                self.__last_screenshot = imutils.to_pillow(cv_img)
-                self.last_screenshot.save(screen_before_abspath)
-                
-                screen_after = 'images/after_%d.jpg' % time.time()
-                d.screenshot(os.path.join(self.save_dir, screen_after))
-                kwargs['screen_after'] = screen_after
-                kwargs['confidence'] = evt.retval.confidence
-                kwargs['position'] = {'x': x, 'y': y}
-            self.add_step('click_image', **kwargs)
-        elif evt.flag == consts.EVENT_ASSERT_EXISTS: # this is image, not tested
-            pattern = d.pattern_open(evt.args[0])
-            target = 'images/target_%.2f.jpg' % time.time()
-            self._save_screenshot(pattern, name=target)
-            kwargs = {
-                'target': target,
-                'description': evt.kwargs.get('desc'),
-                'screen': self._save_screenshot(name='images/screen_%.2f.jpg' % time.time()),
-                'traceback': None if evt.traceback is None else evt.traceback.stack,
-                'success': evt.traceback is None,
-            }
-            if evt.traceback is None:
-                kwargs['confidence'] = evt.retval.confidence
-                (x, y) = evt.retval.pos
-                kwargs['position'] = {'x': x, 'y': y}
-            self.add_step('assert_exists', **kwargs)
-
-
-def listen(d, save_dir='report'):
-    ''' Depreciated '''
-    warnings.warn(
-        "Using report.listen is deprecated, use report.Report(d, save_dir) instead.", 
-        ExtDeprecationWarning, stacklevel=2
-    )
-    Report(d, save_dir)
+    x = (bounds['left'] + bounds['right']) / 2
+    y = (bounds['top'] + bounds['bottom']) / 2
+    return x, y
