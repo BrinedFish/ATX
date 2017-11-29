@@ -1,8 +1,19 @@
 hi,
 
-This branch is customized specifically for android 6.
+This project is fork from [branch](https://github.com/NetEaseGame/ATX) ,I customized specifically for my rom.
 
-For more detail (api,docs,help,so on) ,checkout to origin [branch](https://github.com/NetEaseGame/ATX) .
+**I do not recommend you to use this project.**
+
+But if you want to know how to customize `UI test for android` ,I may be able to provide some help.
+
+This branch is doc-less. For help , check my [blog](http://blog.csdn.net/yeshennet) or send an email to me `me@yeshen.org` .
+
+This project used `adb shell input` to handle all input event,base in [atx](https://github.com/NetEaseGame/ATX) , but delete ios&&window part of that project.
+
+To be better perform in my rom. 
+- Less CPU&IO in my control machine.
+- More robust in terms of input.
+- More suitable for my system.
 
 ### start
 
