@@ -205,15 +205,13 @@ class Application(object):
                      port=self.port,
                      remote_path=phone_tmp_file,
                      local_path=local_tmp_file)
-
             return images.read(local_tmp_file, mapping.visible_area())
-        except IOError:
-            raise IOError("Screenshot failed.")
+        except IOError as error:
+            raise IOError("Screenshot failed:%s" % error)
         finally:
             adb.rm(serial=self.serial, port=self.port, remote_path=phone_tmp_file)
             self.__remove_local_file(local_tmp_file)
 
-    @hook_wrap(consts.EVENT_CLICK_IMAGE)
     def tap_image(self, key=None, local_object_path=None, timeout=15, frequency=0.2):
         if self.local_only:
             return self.__tap_image_remote(local_object_path=self.__get_path(key, local_object_path),
@@ -224,13 +222,12 @@ class Application(object):
                                           timeout=timeout,
                                           frequency=frequency)
 
-    @hook_wrap(consts.EVENT_ASSERT_EXISTS)
     def exists(self, key=None, local_object_path=None):
         local_object_path = self.__get_path(key, local_object_path)
         if self.local_only:
-            self.__exist_remote(local_object_path)
+            self.__exist_remote(local_object_path=local_object_path)
         else:
-            self.__exist_local(local_object_path)
+            self.__exist_local(local_object_path=local_object_path)
 
     def wait_image(self, key=None, local_object_path=None, timeout=15, frequency=0.2):
         start_time = time.time()
@@ -256,9 +253,7 @@ class Application(object):
         adb.home(serial=self.serial, port=self.port, instance=self.instance)
         time.sleep(ACTION_TIME)
 
-    def on_report(self):
-        pass
-
+    @hook_wrap(consts.EVENT_ASSERT_EXISTS)
     def __exist_local(self, local_object_path=None):
         try:
             images.match(target=local_object_path,
@@ -267,6 +262,7 @@ class Application(object):
         except ImageNotFoundError:
             return False
 
+    @hook_wrap(consts.EVENT_CLICK_IMAGE)
     def __tap_image_local(self, local_object_path=None, timeout=15.0, frequency=0.2):
         target = images.read(local_object_path)
         start_time = time.time()
@@ -282,6 +278,7 @@ class Application(object):
         del target
         raise ImageNotFoundError('Not found image %s' % local_object_path)
 
+    @hook_wrap(consts.EVENT_ASSERT_EXISTS)
     def __exist_remote(self, local_object_path=None):
         remote_target = self.__remote_tmp_path(True)
         adb.push(serial=self.serial, port=self.port, local_path=local_object_path, remote_path=remote_target)
@@ -304,6 +301,7 @@ class Application(object):
             adb.rm(serial=self.serial, port=self.port, remote_path=remote_target)
         return False
 
+    @hook_wrap(consts.EVENT_CLICK_IMAGE)
     def __tap_image_remote(self, local_object_path=None, timeout=15, frequency=0.2):
         remote_target = self.__remote_tmp_path(True)
         adb.push(serial=self.serial, port=self.port, local_path=local_object_path, remote_path=remote_target)

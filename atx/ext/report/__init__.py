@@ -68,15 +68,13 @@ class ReportData(object):
         self.saved = False
         self.steps = []
         self.result = None
+        self.start = time.time()
 
-    def header(self, width=0, height=0, serial=''):
+    def header(self, serial=''):
         self.result = dict(
-            device=dict(
-                display=dict(width=width, height=height),
-                serial=serial,
-                start_time=time.strftime("%Y-%m-%d %H:%M:%S"),
-                start_timestamp=time.time()
-            ),
+            serial=serial,
+            start=time.strftime("%Y-%m-%d %H:%M:%S"),
+            usedtime='0s',
             steps=self.steps)
 
     def step(self, step_dict):
@@ -114,6 +112,7 @@ class Reporter(object):
         if not self.saved:
             self.saved = True
             save_dir = self.path
+            self.data.result['usedtime'] = '%ds' % int(time.time() - self.data.start)
             data = json.dumps(self.data.result)
             template_path = os.path.join(__dir__, 'index.tmpl.html')
             save_path = os.path.join(save_dir, 'index.html')
@@ -174,38 +173,40 @@ class Reporter(object):
             current = self.app.screen_image()
             if hook.flag == consts.EVENT_CLICK:
                 x, y = hook.args
-                # x, y = mapping.computer(x, y)
+                x, y = mapping.revise_computer(x, y)
                 after['position'] = {'x': x, 'y': y}
                 if last is not None:
-                    after['screen_before'] = self.__point_saver('bf_tap', screen=last, x=x, y=y)
+                    after['screen_before'] = self.__point_saver('before_tap', screen=last, x=x, y=y)
                 if current is not None:
-                    after['screen_after'] = self.__image_saver("at_tap", image=current)
+                    after['screen_after'] = self.__image_saver("after_tap", image=current)
             elif hook.flag == consts.EVENT_CLICK_IMAGE:
                 if target is not None:
-                    after['target'] = self.__image_saver('tg_tap_img', target)
+                    after['target'] = self.__image_saver('target_tap_img', target)
                 if last is not None:
                     if hook.result is not None:
                         x, y = hook.result
-                        # x, y = mapping.computer(x, y)
+                        x, y = mapping.revise_computer(x, y)
                         after['position'] = {'x': x, 'y': y}
-                        after['screen_before'] = self.__point_saver('bf_tap_img', screen=last, x=x, y=y)
+                        after['screen_before'] = self.__point_saver('before_tap_img', screen=last, x=x, y=y)
                     else:
-                        after['screen_before'] = self.__image_saver('tg_tap_img', last)
+                        after['screen_before'] = self.__image_saver('target_tap_img', last)
                 if current is not None:
-                    after['screen_after'] = self.__image_saver("at_tap_img", image=current)
+                    after['screen_after'] = self.__image_saver("after_tap_img", image=current)
             elif hook.flag == consts.EVENT_TYPE:
-                after['description'] = hook.args
+                after['message'] = hook.args
                 if last is not None:
-                    after['screen_before'] = self.__image_saver('bf_type', image=last)
+                    after['screen_before'] = self.__image_saver('before_type', image=last)
                 if current is not None:
-                    after['screen_after'] = self.__image_saver("at_type", image=current)
+                    after['screen_after'] = self.__image_saver("after_type", image=current)
             elif hook.flag == consts.EVENT_SWIPE:
                 if last is not None:
-                    after['screen_before'] = self.__image_saver('bf_swipe', image=last)
+                    after['screen_before'] = self.__image_saver('before_swipe', image=last)
                 if current is not None:
-                    after['screen_after'] = self.__image_saver("at_swipe", image=current)
+                    after['screen_after'] = self.__image_saver("after_swipe", image=current)
             elif hook.flag == consts.EVENT_ASSERT_EXISTS:
-                after['success'] = hook.result
+                after['message'] = 'found' if hook.args else 'not found'
+                if target is not None:
+                    after['target'] = self.__image_saver('target_tap_img', target)
                 if current is not None:
                     after['screenshot'] = self.__image_saver("check_exist", image=current)
             elif hook.flag == consts.EVENT_SCREENSHOT:

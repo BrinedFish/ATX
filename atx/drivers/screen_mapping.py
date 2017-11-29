@@ -6,7 +6,7 @@ from atx.utils.images import ImageNotFoundError
 
 
 def enable():
-    return False
+    return Falsec
 
 
 def physical_size():
@@ -49,6 +49,17 @@ def computer(x=0, y=0):
         ms = mapping_size()
         mapping_x = int(1.0 * x * os[0] / ms[0])
         mapping_y = int(1.0 * y * os[1] / ms[1])
+        return mapping_x, mapping_y
+    else:
+        return x, y
+
+
+def revise_computer(x=0, y=0):
+    if enable():
+        os = override_size()
+        ms = mapping_size()
+        mapping_x = int(1.0 * x * ms[0] / os[0])
+        mapping_y = int(1.0 * y * ms[1] / os[1])
         return mapping_x, mapping_y
     else:
         return x, y
