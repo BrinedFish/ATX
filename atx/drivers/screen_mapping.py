@@ -6,7 +6,7 @@ from atx.utils.images import ImageNotFoundError
 
 
 def enable():
-    return Falsec
+    return False
 
 
 def physical_size():
