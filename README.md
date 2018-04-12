@@ -54,4 +54,52 @@ pip install aircv==1.4.5&& pip install appnope==0.1.0 \
 python -m atx gui
 ```
 
+### API
 
+```python
+import atx
+d=atx.connect()
+d.attach(package=None, activity=None, resource_path=None, instance=None, display_id=None, identity=None)
+
+d.swipe(startx,starty,endx,endy)
+d.type(u"文字") 
+d.clear_type() 
+d.click(x,y,delay) 
+d.tap(x,y,delay)
+
+d.try_tap_image(key=None, local_object_path=None, timeout=0.6, frequency=0.3, delay=0) 
+d.tap_image() 
+exists(key=None, local_object_path=None, delay=0)
+wait_image(key=None)
+try_tap_text(text="", timeout=0.6, frequency=0.3, delay=0, full_match=True)
+tap_text(text="", timeout=15, frequency=0.3, delay=0, full_match=True)
+find_text(text="")
+exists_text(text="")
+d.stop()
+d.back()
+d.double_back()
+d.home()
+d.current_activity()
+d.assert_activity(activity, delay=2)
+d.current_app()
+d.current_instance()
+d.exists_id(identity)
+d.exists_cover()
+d.top_window_count()
+d.su(["pm","list"])
+d.throw(error="message")
+d.info("message")
+
+```
+
+```python
+@report(level=consts.LEVEL_DEFAULT)
+def template(d, ctx):
+    pass
+```
+
+- LEVEL_NONE 
+- LEVEL_DEFAULT 
+- LEVEL_HTML 
+
+[wiki](https://github.com/wuyisheng/ATX/wiki/API)
